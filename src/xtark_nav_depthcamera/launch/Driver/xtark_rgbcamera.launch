@@ -1,0 +1,25 @@
+ <launch>
+    <arg name="device" default="/dev/video0" />
+    <arg name="resolution" default="480p"/>
+    
+    <group if="$(eval arg('resolution') == '480p')">
+	    <node name="usb_cam" pkg="usb_cam" type="usb_cam_node" output="screen" >
+	        <param name="video_device" value="/dev/video2" />
+	        <param name="image_width" value="640"/>
+	        <param name="image_height" value="480"/>
+	        <param name="pixel_format" value="yuyv"/>
+	        <param name="camera_frame_id" value="usb_cam"/>
+	        <param name="io_method" value="mmap"/>
+	        <param name="framerate" value="30"/>
+	        <param name="contrast" value="16"/>
+	        <param name="saturation" value="128"/>
+	        <param name="sharpness" value="3"/>
+	        <param name="autofocus" value="false"/>
+	        <param name="camera_info_url" type="string" value="file://$(find xtark_driver)/config/usb_cam.yaml"/>
+	        <param name="camera_name" value="camera"/>
+        </node>
+    </group>
+    
+
+</launch>
+
