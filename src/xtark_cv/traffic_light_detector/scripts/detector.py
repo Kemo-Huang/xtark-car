@@ -14,8 +14,8 @@ class TrafficLightDetector:
     def __init__(self):
         self.bridge = CvBridge()
         self.image_sub = rospy.Subscriber("/usb_cam/image_raw",Image,self.callback)
-        self.image_pub = rospy.Publisher("/traffic/image",Image)
-	    self.light_color_pub = rospy.Publisher("/traffic/light_color", String)
+        self.image_pub = rospy.Publisher("/traffic/image",Image, queue_size=1)
+        self.light_color_pub = rospy.Publisher("/traffic/light_color", String, queue_size=1)
 
     def callback(self, data):
         try:
@@ -27,9 +27,10 @@ class TrafficLightDetector:
         
         try:
             self.image_pub.publish(self.bridge.cv2_to_imgmsg(cimg, "bgr8"))
-	    self.light_color_pub.publish(traffic_colors)
         except CvBridgeError as e:
             print(e)
+            
+        self.light_color_pub.publish(traffic_colors)
 
 def detect(img):
     font = cv2.FONT_HERSHEY_SIMPLEX
