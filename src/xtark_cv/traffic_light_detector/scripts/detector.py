@@ -66,7 +66,6 @@ def detect(img):
 
         for i in r_circles[0, :]:
             cv2.circle(cimg, (i[0], i[1]), i[2] + 10, (0, 255, 0), 2)
-            cv2.circle(maskr, (i[0], i[1]), i[2] + 30, (255, 255, 255), 2)
             cv2.putText(cimg, 'RED', (i[0], i[1]), font, 1, (255, 0, 0), 2, cv2.LINE_AA)
             traffic_color += 'red '
 
@@ -75,7 +74,6 @@ def detect(img):
 
         for i in g_circles[0, :]:
             cv2.circle(cimg, (i[0], i[1]), i[2] + 10, (0, 255, 0), 2)
-            cv2.circle(maskg, (i[0], i[1]), i[2] + 30, (255, 255, 255), 2)
             cv2.putText(cimg, 'GREEN', (i[0], i[1]), font, 1, (255, 0, 0), 2, cv2.LINE_AA)
             traffic_color += 'green '
 
@@ -84,7 +82,6 @@ def detect(img):
 
         for i in y_circles[0, :]:
             cv2.circle(cimg, (i[0], i[1]), i[2] + 10, (0, 255, 0), 2)
-            cv2.circle(masky, (i[0], i[1]), i[2] + 30, (255, 255, 255), 2)
             cv2.putText(cimg, 'YELLOW', (i[0], i[1]), font, 1, (255, 0, 0), 2, cv2.LINE_AA)
             traffic_color += 'yellow '
 
