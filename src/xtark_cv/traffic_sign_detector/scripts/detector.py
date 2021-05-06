@@ -2,22 +2,72 @@
 from __future__ import print_function
 
 import pytesseract
-import sys
 import rospy
 import cv2
 import numpy as np
+from cv_bridge import CvBridge, CvBridgeError
+from std_msgs.msg import String
+from sensor_msgs.msg import Image
+
 
 class TrafficSignDetector:
     def __init__(self):
-        pass
+        self.bridge = CvBridge()
+        self.image_sub = rospy.Subscriber("/camera/image_raw", Image, self.callback)
+        self.normal_img_pub = rospy.Publisher("/traffic_sign/normal_image", Image, queue_size=1)
+        self.blur_img_pub = rospy.Publisher("/traffic_sign/blur_image", Image, queue_size=1)
+        self.string_pub = rospy.Publisher("/traffic_sign/speed_limit", String, queue_size=1)
 
+    def callback(self, data):
+        try:
+            cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
+            self.normal_speed_limit_detection(cv_image)
+            self.removed_speed_limit_detection(cv_image)
+        except CvBridgeError as e:
+            print(e)
 
-def main():
-    image = cv2.imread('40.jpg')
-    # print('normal', normal_speed_limit_detection(image))
-    print('removed', removed_speed_limit_detection(image))
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    def normal_speed_limit_detection(self, bgr_img):
+        # get red mask
+        hsv = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
+        lower_red = np.array([0, 50, 50])
+        upper_red = np.array([10, 255, 255])
+        mask0 = cv2.inRange(hsv, lower_red, upper_red)
+        lower_red = np.array([160, 50, 50])
+        upper_red = np.array([180, 255, 255])
+        mask1 = cv2.inRange(hsv, lower_red, upper_red)
+        mask = mask0 + mask1
+
+        mask_img = bgr_img.copy()
+        mask_img[mask == 0] = 0
+
+        mask_gray = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
+        circles = cv2.HoughCircles(mask_gray, cv2.HOUGH_GRADIENT, 1, 100, param2=40, minRadius=10, maxRadius=300)
+        if circles is not None:
+            gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
+            thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+            thresh = crop_image_by_circles(circles, thresh)
+            # publish
+            self.normal_img_pub.publish(self.bridge.cv2_to_imgmsg(thresh, "mono8"))
+            if '10' in digit_detection(thresh) and thresh.shape[0] > 35 and thresh.shape[1] > 35:
+                self.string_pub.publish('red: ' + str(thresh.shape))
+
+    def removed_speed_limit_detection(self, bgr_img):
+        gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
+        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 100, param2=140, minRadius=10, maxRadius=300)
+        thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        if circles is not None:
+            thresh = crop_image_by_circles(circles, thresh)
+
+            # remove lines
+            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (15, 15))
+            opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+            inv_img = cv2.bitwise_not(opening)
+            blur_img = cv2.medianBlur(inv_img, 5)
+
+            # publish
+            self.blur_img_pub.publish(self.bridge.cv2_to_imgmsg(blur_img, "mono8"))
+            if '10' in digit_detection(blur_img):
+                self.string_pub.publish('remove: ' + str(blur_img.shape))
 
 
 def digit_detection(image):
@@ -26,7 +76,7 @@ def digit_detection(image):
     return ret_str
 
 
-def crop_image_by_circles(circles, vis_img, cropped_img):
+def crop_image_by_circles(circles, cropped_img):
     circles = circles.astype(np.int)
     circles = circles[0]
     max_ypr = max_xpr = 0
@@ -44,63 +94,12 @@ def crop_image_by_circles(circles, vis_img, cropped_img):
             max_ypr = y + scale * r
         if max_xpr < x + scale * r < img_size[1]:
             max_xpr = x + scale * r
-        cv2.circle(vis_img, (x, y), r, (255, 0, 0), 2)
     cropped_img = cropped_img[int(min_ymr): int(max_ypr), int(min_xmr): int(max_xpr)]
-    cv2.imshow('img_circles', vis_img)
-    return vis_img, cropped_img
 
-
-def normal_speed_limit_detection(image):
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    lower_red = np.array([0, 50, 50])
-    upper_red = np.array([10, 255, 255])
-    mask0 = cv2.inRange(hsv, lower_red, upper_red)
-    lower_red = np.array([160, 50, 50])
-    upper_red = np.array([180, 255, 255])
-    mask1 = cv2.inRange(hsv, lower_red, upper_red)
-    mask = mask0 + mask1
-
-    mask_img = image.copy()
-    mask_img[mask == 0] = 0
-
-    mask_gray = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
-    circles = cv2.HoughCircles(mask_gray, cv2.HOUGH_GRADIENT, 1, 20, param2=40, minRadius=10, maxRadius=800)
-    cv2.imshow('mask_img', mask_img)
-    cv2.imshow('mask_gray', mask_gray)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    if circles is not None:
-        vis_img, thresh = crop_image_by_circles(circles, image.copy(), thresh)
-        # publish
-        if thresh is not None:
-            cv2.imshow('final_img', cv2.resize(thresh, (100, 100)))
-            return digit_detection(thresh)
-    return ''
-
-
-def removed_speed_limit_detection(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    cv2.imshow('gray', gray)
-    circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20, param2=100, minRadius=10, maxRadius=800)
-    thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
-    if circles is not None:
-        vis_img, thresh = crop_image_by_circles(circles, image.copy(), thresh)
-    if thresh is not None:
-        kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (25, 25))
-        opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-        inv_img = cv2.bitwise_not(opening)
-        blur_img = cv2.medianBlur(inv_img, 25)
-
-        cv2.imshow('inv_img', cv2.resize(inv_img, (100, 100)))
-        cv2.imshow('blur_img', cv2.resize(blur_img, (100, 100)))
-
-        return digit_detection(inv_img) + ' ' + digit_detection(blur_img)
-    return ''
-
-
-def limit_the_speed(image):
-    pass
+    return cropped_img
 
 
 if __name__ == '__main__':
-    main()
+    rospy.init_node('traffic_sign_detector', anonymous=True)
+    TrafficSignDetector()
+    rospy.spin()
