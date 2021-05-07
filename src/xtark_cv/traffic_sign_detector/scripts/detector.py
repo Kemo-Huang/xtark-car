@@ -5,28 +5,47 @@ import pytesseract
 import rospy
 import cv2
 import numpy as np
-from cv_bridge import CvBridge, CvBridgeError
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from sensor_msgs.msg import Image
+import subprocess
+import os
+import time
+import rosbag
 
 
 class TrafficSignDetector:
     def __init__(self):
-        self.bridge = CvBridge()
-        self.image_sub = rospy.Subscriber("/camera/image_raw", Image, self.callback)
+        self.image_sub = rospy.Subscriber("/camera/image_raw", Image, self.img_callback)
         self.normal_img_pub = rospy.Publisher("/traffic_sign/normal_image", Image, queue_size=1)
         self.blur_img_pub = rospy.Publisher("/traffic_sign/blur_image", Image, queue_size=1)
-        self.string_pub = rospy.Publisher("/traffic_sign/speed_limit", String, queue_size=1)
+        self.string_pub = rospy.Publisher("/traffic_sign/string", String, queue_size=1)
+        self.bool_pub = rospy.Publisher("/traffic_sign/speed_limit", Bool, queue_size=1)
+        self.speed_limit = False
+        self.timer = 0
 
-    def callback(self, data):
-        try:
-            cv_image = self.bridge.imgmsg_to_cv2(data, "bgr8")
-            self.normal_speed_limit_detection(cv_image)
-            self.removed_speed_limit_detection(cv_image)
-        except CvBridgeError as e:
-            print(e)
+    def img_callback(self, data):
+        bag = rosbag.Bag('raw.bag', 'w')
+        bag.write('raw', data)
+        bag.close()
+        subprocess.Popen(["/usr/bin/python", os.path.abspath("converter.py")])
+        print('callback')
+        while True:
+            if os.path.exists('color_img.npy'):
+                print('file exists')
+                cv_image = np.load('color_img.npy')
+                break
+        os.remove('color_img.npy')
+        print(cv_image.shape)
+        if self.normal_speed_limit_detection(cv_image):
+            self.speed_limit = True
+            self.timer = time.time()
+        elif self.removed_speed_limit_detection(cv_image) and time.time() - self.timer > 5:
+            self.speed_limit = False
+        self.bool_pub.publish(self.speed_limit)
 
     def normal_speed_limit_detection(self, bgr_img):
+        is_detected = False
+
         # get red mask
         hsv = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2HSV)
         lower_red = np.array([0, 50, 50])
@@ -41,33 +60,38 @@ class TrafficSignDetector:
         mask_img[mask == 0] = 0
 
         mask_gray = cv2.cvtColor(mask_img, cv2.COLOR_BGR2GRAY)
-        circles = cv2.HoughCircles(mask_gray, cv2.HOUGH_GRADIENT, 1, 100, param2=40, minRadius=10, maxRadius=300)
+        circles = cv2.HoughCircles(mask_gray, cv2.HOUGH_GRADIENT, 1, 100, param2=40, minRadius=30, maxRadius=300)
         if circles is not None:
             gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
             thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
             thresh = crop_image_by_circles(circles, thresh)
             # publish
-            self.normal_img_pub.publish(self.bridge.cv2_to_imgmsg(thresh, "mono8"))
+            # self.normal_img_pub.publish(self.bridge.cv2_to_imgmsg(thresh, "mono8"))
             if '10' in digit_detection(thresh) and thresh.shape[0] > 35 and thresh.shape[1] > 35:
                 self.string_pub.publish('red: ' + str(thresh.shape))
+                is_detected = True
+        return is_detected
 
     def removed_speed_limit_detection(self, bgr_img):
+        is_detected = False
         gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
-        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 100, param2=140, minRadius=10, maxRadius=300)
+        circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 100, param2=150, minRadius=30, maxRadius=300)
         thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
         if circles is not None:
             thresh = crop_image_by_circles(circles, thresh)
 
             # remove lines
-            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (15, 15))
+            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (13, 13))
             opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
             inv_img = cv2.bitwise_not(opening)
             blur_img = cv2.medianBlur(inv_img, 5)
 
             # publish
-            self.blur_img_pub.publish(self.bridge.cv2_to_imgmsg(blur_img, "mono8"))
+            # self.blur_img_pub.publish(self.bridge.cv2_to_imgmsg(blur_img, "mono8"))
             if '10' in digit_detection(blur_img):
                 self.string_pub.publish('remove: ' + str(blur_img.shape))
+                is_detected = True
+        return is_detected
 
 
 def digit_detection(image):
