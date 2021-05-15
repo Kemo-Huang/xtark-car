@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<launch>
+<node name="traffic_sign_node" pkg="traffic_sign" type="traffic_sign_node"/>
+</launch>
